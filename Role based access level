@@ -1,0 +1,77 @@
+const express = require('express');
+const bcrypt = require('bcrypt');
+const bodyParser = require('body-parser');
+const jwt = require('jsonwebtoken');
+
+const app = express();
+app.use(bodyParser.json());
+
+const SECRET_KEY = "mysecret123"; // JWT secret key
+
+// In-memory database for demo
+let users = [];
+
+// Middleware to verify JWT and role
+function authenticate(allowedRoles) {
+    return (req, res, next) => {
+        const authHeader = req.headers['authorization'];
+        if (!authHeader) return res.status(401).send('Missing token');
+
+        const token = authHeader.split(' ')[1];
+        try {
+            const user = jwt.verify(token, SECRET_KEY);
+            if (!allowedRoles.includes(user.role)) {
+                return res.status(403).send('Access denied');
+            }
+            req.user = user;
+            next();
+        } catch (err) {
+            res.status(403).send('Invalid token');
+        }
+    };
+}
+
+// Register route
+app.post('/register', async (req, res) => {
+    const { username, password, role } = req.body;
+    if (!username || !password || !role) return res.status(400).send('Missing fields');
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    users.push({ username, password: hashedPassword, role });
+    res.send('User registered successfully');
+});
+
+// Login route
+app.post('/login', async (req, res) => {
+    const { username, password } = req.body;
+    const user = users.find(u => u.username === username);
+    if (!user) return res.status(400).send('User not found');
+
+    const isMatch = await bcrypt.compare(password, user.password);
+    if (!isMatch) return res.status(400).send('Incorrect password');
+
+    const token = jwt.sign({ username: user.username, role: user.role }, SECRET_KEY, { expiresIn: '1h' });
+    res.json({ message: 'Login successful', token });
+});
+
+// Protected route – Admin only
+app.get('/all-users', authenticate(['admin']), (req, res) => {
+    res.json({ users });
+});
+
+// Protected route – Admin + Manager
+app.get('/view-users', authenticate(['admin', 'manager']), (req, res) => {
+    const userList = users.map(u => ({ username: u.username, role: u.role }));
+    res.json({ users: userList });
+});
+
+// Protected route – all roles (employee sees own profile)
+app.get('/profile', authenticate(['admin', 'manager', 'employee']), (req, res) => {
+    const user = users.find(u => u.username === req.user.username);
+    res.json({ profile: { username: user.username, role: user.role } });
+});
+
+// Start server
+app.listen(6000, () => {
+    console.log('Server running on port 6000');
+});
